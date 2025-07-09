@@ -28,38 +28,82 @@ app.registerExtension({
                 if (loraWidget && triggerWidget) {
                     console.log("Adding buttons to LoRa Loader node");
                     
+                    // Alternative approach: Use change event instead of overriding callback
+                    // This preserves the original filtering behavior completely
+                    if (loraWidget.inputEl) {
+                        loraWidget.inputEl.addEventListener('change', async (event) => {
+                            const value = event.target.value;
+                            
+                            // Only auto-load triggers if trigger field is empty
+                            if (value && (!triggerWidget.value || triggerWidget.value.trim() === "")) {
+                                try {
+                                    const response = await api.fetchApi("/lora_triggers", {
+                                        method: "POST",
+                                        headers: {
+                                            "Content-Type": "application/json",
+                                        },
+                                        body: JSON.stringify({
+                                            lora_name: value
+                                        })
+                                    });
+                                    
+                                    if (response.ok) {
+                                        const data = await response.json();
+                                        if (data.trigger_words) {
+                                            triggerWidget.value = data.trigger_words;
+                                            triggerWidget.callback && triggerWidget.callback(data.trigger_words);
+                                        }
+                                    }
+                                } catch (error) {
+                                    console.log("Could not auto-load triggers:", error);
+                                }
+                            }
+                        });
+                    }
+                    
+                    // Keep the original callback approach as backup
                     // Store original callback
                     const originalLoraCallback = loraWidget.callback;
                     
                     // Override the LoRa callback to auto-load triggers when LoRa changes
+                    // But preserve the original filtering functionality
                     loraWidget.callback = async function(value) {
+                        // Call the original callback first to preserve filtering behavior
                         if (originalLoraCallback) {
-                            originalLoraCallback.call(this, value);
+                            const result = originalLoraCallback.call(this, value);
+                            // If the original callback returns something, respect it
+                            if (result !== undefined) {
+                                return result;
+                            }
                         }
                         
-                        // Auto-load triggers for the selected LoRa if trigger field is empty
-                        if (!triggerWidget.value || triggerWidget.value.trim() === "") {
-                            try {
-                                const response = await api.fetchApi("/lora_triggers", {
-                                    method: "POST",
-                                    headers: {
-                                        "Content-Type": "application/json",
-                                    },
-                                    body: JSON.stringify({
-                                        lora_name: value
-                                    })
-                                });
-                                
-                                if (response.ok) {
-                                    const data = await response.json();
-                                    if (data.trigger_words) {
-                                        triggerWidget.value = data.trigger_words;
-                                        triggerWidget.callback && triggerWidget.callback(data.trigger_words);
+                        // Only auto-load triggers if this looks like a complete LoRa selection
+                        // (not just typing for filtering)
+                        if (value && !triggerWidget.value || triggerWidget.value.trim() === "") {
+                            // Add a small delay to ensure this is a final selection, not just typing
+                            setTimeout(async () => {
+                                try {
+                                    const response = await api.fetchApi("/lora_triggers", {
+                                        method: "POST",
+                                        headers: {
+                                            "Content-Type": "application/json",
+                                        },
+                                        body: JSON.stringify({
+                                            lora_name: value
+                                        })
+                                    });
+                                    
+                                    if (response.ok) {
+                                        const data = await response.json();
+                                        if (data.trigger_words) {
+                                            triggerWidget.value = data.trigger_words;
+                                            triggerWidget.callback && triggerWidget.callback(data.trigger_words);
+                                        }
                                     }
+                                } catch (error) {
+                                    console.log("Could not auto-load triggers:", error);
                                 }
-                            } catch (error) {
-                                console.log("Could not auto-load triggers:", error);
-                            }
+                            }, 500); // 500ms delay to avoid triggering during typing
                         }
                     };
                     
