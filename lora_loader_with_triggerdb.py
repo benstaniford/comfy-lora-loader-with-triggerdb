@@ -24,7 +24,6 @@ class LoRaLoaderWithTriggerDB:
                 "strength_model": ("FLOAT", {"default": 1.0, "min": -20.0, "max": 20.0, "step": 0.01}),
                 "strength_clip": ("FLOAT", {"default": 1.0, "min": -20.0, "max": 20.0, "step": 0.01}),
                 "trigger_words": ("STRING", {"multiline": True, "default": "", "dynamicPrompts": False}),
-                "save_triggers": ("BOOLEAN", {"default": False, "label_on": "Save", "label_off": "Don't Save"}),
             },
             "optional": {
                 "clip": ("CLIP",),
@@ -62,7 +61,7 @@ class LoRaLoaderWithTriggerDB:
         """Get the base name of the LoRa file (without extension)"""
         return os.path.splitext(lora_name)[0]
     
-    def load_lora(self, model, lora_name, strength_model, strength_clip, trigger_words, save_triggers, clip=None):
+    def load_lora(self, model, lora_name, strength_model, strength_clip, trigger_words, clip=None):
         if strength_model == 0 and strength_clip == 0:
             return (model, clip, trigger_words)
         
@@ -79,27 +78,9 @@ class LoRaLoaderWithTriggerDB:
         # Apply LoRa to model
         model_lora, clip_lora = comfy.sd.load_lora_for_models(model, clip, lora, strength_model, strength_clip)
         
-        # Handle trigger words
-        lora_base_name = self.get_lora_base_name(lora_name)
-        triggers_db = self.load_triggers_db()
-        
-        # Load existing trigger words if the current field is empty
-        current_triggers = trigger_words.strip()
-        if not current_triggers and lora_base_name in triggers_db:
-            current_triggers = triggers_db[lora_base_name]
-            print(f"Loaded trigger words for {lora_base_name}: {current_triggers}")
-        
-        # If save_triggers is True, save the current trigger words
-        if save_triggers and current_triggers:
-            triggers_db[lora_base_name] = current_triggers
-            self.save_triggers_db(triggers_db)
-            print(f"Saved trigger words for {lora_base_name}: {current_triggers}")
-        
-        return (model_lora, clip_lora, current_triggers)
+        # Return current trigger words (buttons handle load/save via web interface)
+        return (model_lora, clip_lora, trigger_words)
 
-
-# Web interface for dynamic trigger loading
-WEB_DIRECTORY = "./web"
 
 # API endpoint for loading triggers
 @server.PromptServer.instance.routes.post("/lora_triggers")
@@ -133,6 +114,55 @@ async def load_lora_triggers(request):
     except Exception as e:
         print(f"Error in load_lora_triggers: {e}")
         return web.json_response({"trigger_words": ""}, status=500)
+
+
+# API endpoint for saving triggers
+@server.PromptServer.instance.routes.post("/lora_triggers_save")
+async def save_lora_triggers(request):
+    try:
+        data = await request.json()
+        lora_name = data.get("lora_name", "")
+        trigger_words = data.get("trigger_words", "")
+        
+        if not lora_name:
+            return web.json_response({"success": False, "message": "No LoRa name provided"})
+        
+        # Get LoRa path and triggers file
+        lora_path = folder_paths.get_folder_paths("loras")[0] if folder_paths.get_folder_paths("loras") else ""
+        triggers_file = os.path.join(lora_path, "triggers.json")
+        
+        # Load existing triggers database
+        triggers_db = {}
+        if os.path.exists(triggers_file):
+            try:
+                with open(triggers_file, 'r', encoding='utf-8') as f:
+                    triggers_db = json.load(f)
+            except (json.JSONDecodeError, Exception) as e:
+                print(f"Error loading triggers.json: {e}")
+        
+        # Save trigger words
+        lora_base_name = os.path.splitext(lora_name)[0]
+        if trigger_words.strip():
+            triggers_db[lora_base_name] = trigger_words.strip()
+            
+            # Save to file
+            try:
+                os.makedirs(os.path.dirname(triggers_file), exist_ok=True)
+                with open(triggers_file, 'w', encoding='utf-8') as f:
+                    json.dump(triggers_db, f, indent=2, ensure_ascii=False)
+                
+                print(f"Saved trigger words for {lora_base_name}: {trigger_words}")
+                return web.json_response({"success": True, "message": f"Saved triggers for {lora_base_name}"})
+                
+            except Exception as e:
+                print(f"Error saving triggers.json: {e}")
+                return web.json_response({"success": False, "message": f"Error saving: {e}"})
+        else:
+            return web.json_response({"success": False, "message": "No trigger words to save"})
+        
+    except Exception as e:
+        print(f"Error in save_lora_triggers: {e}")
+        return web.json_response({"success": False, "message": f"Error: {e}"}, status=500)
 
 
 # JavaScript to handle dynamic trigger loading will be in web/lora_loader_with_triggerdb.js
