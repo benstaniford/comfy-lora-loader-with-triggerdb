@@ -6,6 +6,7 @@ import comfy.sd
 import comfy.utils
 from aiohttp import web
 import server
+from .file_id import get_file_id_safe
 
 def get_user_db_path():
     """Get the user database directory"""
@@ -64,6 +65,23 @@ def clean_trigger_word(word):
     if cleaned.lower() in {"img", "img_dir", "image_dir"}:
         return None  # Filter out these words
     return cleaned
+
+def build_file_id_to_key_map(triggers_db):
+    """
+    Build a mapping of file_id -> database_key for all entries that have a file_id.
+
+    Args:
+        triggers_db: The triggers database dictionary
+
+    Returns:
+        dict: Mapping of file_id (str) -> database_key (str)
+    """
+    file_id_map = {}
+    for db_key, data in triggers_db.items():
+        if isinstance(data, dict) and "file_id" in data:
+            file_id_map[data["file_id"]] = db_key
+    return file_id_map
+
 
 def read_lora_metadata(lora_path):
     """Read metadata from LoRa file"""
@@ -217,21 +235,126 @@ async def load_lora_triggers(request):
                     triggers_db = json.load(f)
             except (json.JSONDecodeError, Exception) as e:
                 print(f"Error loading triggers.json: {e}")
-        
-        # Get base name and lookup triggers with cross-platform matching
-        instance = LoRaLoaderWithTriggerDB()
-        lora_data = instance.find_lora_in_db(triggers_db, lora_name)
-        
+
+        # Migrate all entries that don't have file_ids yet
+        db_modified = False
+        for db_key, entry_data in list(triggers_db.items()):
+            # Convert old string format to dict
+            if isinstance(entry_data, str):
+                entry_data = {
+                    "all_triggers": entry_data,
+                    "active_triggers": ""
+                }
+                triggers_db[db_key] = entry_data
+                db_modified = True
+                print(f"[MIGRATION] Converted string format to dict: {db_key}")
+
+            # Check if entry needs a file_id
+            if isinstance(entry_data, dict) and "file_id" not in entry_data:
+                # Try to find the LoRa file
+                # db_key is the normalized path without extension
+                possible_exts = [".safetensors", ".pt", ".bin"]
+                found_path = None
+                for ext in possible_exts:
+                    test_path = folder_paths.get_full_path("loras", db_key + ext)
+                    if test_path and os.path.isfile(test_path):
+                        found_path = test_path
+                        break
+
+                if found_path:
+                    # File exists - calculate file_id
+                    file_id = get_file_id_safe(found_path)
+                    if file_id:
+                        entry_data["file_id"] = file_id
+                        triggers_db[db_key] = entry_data
+                        db_modified = True
+                        print(f"[MIGRATION] Added file_id to {db_key}: {file_id[:8]}...")
+                else:
+                    # File not found - mark as unknown
+                    entry_data["file_id"] = "unknown"
+                    triggers_db[db_key] = entry_data
+                    db_modified = True
+                    print(f"[MIGRATION] Marked missing file as unknown: {db_key}")
+
+        # Save migrated database if needed
+        if db_modified:
+            try:
+                with open(triggers_file, 'w', encoding='utf-8') as f:
+                    json.dump(triggers_db, f, indent=2, ensure_ascii=False)
+                print(f"[MIGRATION] Updated triggers database with file_ids")
+            except Exception as e:
+                print(f"Error saving migrated triggers.json: {e}")
+
+        # Get full path to LoRa file and calculate file_id
+        lora_path = folder_paths.get_full_path("loras", lora_name)
+        current_file_id = None
+        if lora_path and os.path.isfile(lora_path):
+            current_file_id = get_file_id_safe(lora_path)
+            print(f"[DEBUG] LoRa file found: {lora_name}, file_id: {current_file_id[:8] if current_file_id else 'None'}...")
+        else:
+            print(f"[DEBUG] LoRa file not found: {lora_name}, path: {lora_path}")
+
+        lora_data = {}
+
+        # Try file_id-based lookup first if we have a file_id
+        db_key = None
+        found_by = None
+        path_needs_update = False
+        if current_file_id:
+            file_id_map = build_file_id_to_key_map(triggers_db)
+            print(f"[DEBUG] File ID map has {len(file_id_map)} entries")
+            if current_file_id in file_id_map:
+                old_db_key = file_id_map[current_file_id]
+                lora_data = triggers_db[old_db_key]
+                found_by = "file_id"
+                print(f"Loaded triggers by file_id: {current_file_id[:8]}... -> {old_db_key}")
+
+                # Check if the path has changed (file was moved)
+                instance = LoRaLoaderWithTriggerDB()
+                current_normalized_path = instance.get_lora_base_name(lora_name)
+                if old_db_key != current_normalized_path:
+                    print(f"[PATH UPDATE] LoRa moved: {old_db_key} -> {current_normalized_path}")
+                    # Update the database key to the new path
+                    db_key = current_normalized_path
+                    triggers_db[db_key] = lora_data
+                    del triggers_db[old_db_key]
+                    path_needs_update = True
+                else:
+                    db_key = old_db_key
+            else:
+                print(f"[DEBUG] File ID {current_file_id[:8]}... not found in map, trying path lookup")
+
+        # Fall back to path-based lookup if file_id lookup failed
+        if not lora_data:
+            instance = LoRaLoaderWithTriggerDB()
+            lora_data = instance.find_lora_in_db(triggers_db, lora_name)
+            if lora_data:
+                found_by = "path"
+                # Get the actual key used in the database
+                db_key = instance.get_lora_base_name(lora_name)
+                has_file_id = "file_id" in lora_data if isinstance(lora_data, dict) else False
+                print(f"Loaded triggers by path: {lora_name} (has_file_id: {has_file_id})")
+            else:
+                print(f"[DEBUG] No triggers found in database for: {lora_name}")
+
         # Handle both old format (string) and new format (dict)
+        # Note: migration happens above, so this should mostly be dict format now
         if isinstance(lora_data, str):
-            # Old format - migrate to new format
             all_triggers = lora_data
             active_triggers = ""
         else:
-            # New format
             all_triggers = lora_data.get("all_triggers", "")
             active_triggers = lora_data.get("active_triggers", "")
-        
+
+        # Save database if path was updated
+        if path_needs_update:
+            try:
+                with open(triggers_file, 'w', encoding='utf-8') as f:
+                    json.dump(triggers_db, f, indent=2, ensure_ascii=False)
+                print(f"[PATH UPDATE] Saved database with updated path")
+            except Exception as e:
+                print(f"Error saving updated path: {e}")
+
         return web.json_response({"all_triggers": all_triggers, "active_triggers": active_triggers})
         
     except Exception as e:
@@ -264,23 +387,35 @@ async def save_lora_triggers(request):
             except (json.JSONDecodeError, Exception) as e:
                 print(f"Error loading triggers.json: {e}")
         
+        # Get full path to LoRa file and calculate file_id
+        lora_path = folder_paths.get_full_path("loras", lora_name)
+        file_id = None
+        if lora_path and os.path.isfile(lora_path):
+            file_id = get_file_id_safe(lora_path)
+
         # Save trigger words with normalized path
         instance = LoRaLoaderWithTriggerDB()
         lora_base_name = instance.get_lora_base_name(lora_name)  # This normalizes the path
-        
+
         if all_triggers.strip() or active_triggers.strip():
-            triggers_db[lora_base_name] = {
+            # Create database entry with file_id if available
+            entry = {
                 "all_triggers": all_triggers.strip(),
                 "active_triggers": active_triggers.strip()
             }
-            
+            if file_id:
+                entry["file_id"] = file_id
+
+            triggers_db[lora_base_name] = entry
+
             # Save to file
             try:
                 os.makedirs(os.path.dirname(triggers_file), exist_ok=True)
                 with open(triggers_file, 'w', encoding='utf-8') as f:
                     json.dump(triggers_db, f, indent=2, ensure_ascii=False)
-                
-                print(f"Saved triggers for {lora_base_name}: all='{all_triggers}', active='{active_triggers}'")
+
+                file_id_msg = f" (file_id: {file_id})" if file_id else ""
+                print(f"Saved triggers for {lora_base_name}{file_id_msg}: all='{all_triggers}', active='{active_triggers}'")
                 return web.json_response({"success": True, "message": f"Saved triggers for {lora_base_name}"})
                 
             except Exception as e:

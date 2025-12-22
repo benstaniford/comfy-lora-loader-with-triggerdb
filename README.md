@@ -73,16 +73,22 @@ LoRa loader with Trigger DB being used to apply triggers as part of a combinatio
 
 ## Database
 
-Trigger words are stored in `triggers.json` in your ComfyUI loras folder:
+Trigger words are stored in `user/default/user-db/lora-triggers.json` in your ComfyUI directory:
 
 ```json
 {
   "lora_name": {
     "all_triggers": "masterpiece, best quality, detailed",
-    "active_triggers": "masterpiece, best quality"
+    "active_triggers": "masterpiece, best quality",
+    "file_id": "abc123def456..."
   }
 }
 ```
+
+**Key Features:**
+- **Content-based tracking**: Each LoRa is tracked by its file content ID, so triggers persist even if you rename or move the file
+- **Automatic migration**: The database automatically handles older formats and adds file IDs when you save triggers
+- **Cross-platform compatible**: Works consistently across Windows, Linux, and Mac
 
 The database file is created automatically and handles migration from older formats.
 
