@@ -224,10 +224,13 @@ class StackingLoRaLoaderWithTriggerDB:
         # Sort by index to maintain order
         lora_inputs.sort(key=lambda x: x[0])
 
-        # Initialize outputs
+        # Initialize outputs (don't clone yet, do it only if we need to apply loras)
         current_model = model
         current_clip = clip
         all_triggers = []
+
+        # Track if we've cloned yet
+        has_cloned = False
 
         # Process each LoRa sequentially
         for index, lora_data in lora_inputs:
@@ -279,6 +282,14 @@ class StackingLoRaLoaderWithTriggerDB:
             except Exception as e:
                 print(f"Error loading LoRa {lora_name}: {e}")
                 continue
+
+            # Clone model and clip on first LoRa application
+            if not has_cloned:
+                if current_model is not None:
+                    current_model = current_model.clone()
+                if current_clip is not None:
+                    current_clip = current_clip.clone()
+                has_cloned = True
 
             # Apply LoRa to model and CLIP
             try:
