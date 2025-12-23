@@ -235,6 +235,7 @@ class StackingLoRaLoaderWithTriggerDB:
         # Process each LoRa sequentially
         for index, lora_data in lora_inputs:
             # lora_data should be a dict: {"on": bool, "lora": str, "strength": float, "triggers": str}
+            print(f"DEBUG lora_{index}: type={type(lora_data).__name__}, value={lora_data}")
             if not isinstance(lora_data, dict):
                 print(f"Warning: lora_{index} has invalid data format (expected dict, got {type(lora_data).__name__})")
                 continue
@@ -244,6 +245,7 @@ class StackingLoRaLoaderWithTriggerDB:
             lora_name = lora_data.get("lora", "")
             strength = lora_data.get("strength", 1.0)
             triggers = lora_data.get("triggers", "")
+            print(f"DEBUG lora_{index}: enabled={is_enabled}, lora={lora_name}, strength={strength}, triggers='{triggers}'")
 
             # Skip if disabled or no LoRa selected
             if not is_enabled:
@@ -314,6 +316,7 @@ class StackingLoRaLoaderWithTriggerDB:
 
         # Combine all triggers as comma-separated string
         combined_triggers = ", ".join(all_triggers) if all_triggers else ""
+        print(f"DEBUG combined_triggers: all_triggers={all_triggers}, combined='{combined_triggers}'")
 
         # Return modified model/clip and combined triggers
         return (current_model, current_clip, combined_triggers)

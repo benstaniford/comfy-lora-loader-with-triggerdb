@@ -600,9 +600,12 @@ app.registerExtension({
                     o.widgets_values = [];
                 }
 
+                console.log("onSerialize called, loraSlots:", this.loraSlots);
+
                 // Replace each lora widget's value with a dict for execution
                 for (const slot of this.loraSlots || []) {
                     const widgetIndex = this.widgets.indexOf(slot.widget);
+                    console.log(`Slot ${slot.index}: widgetIndex=${widgetIndex}, lora=${slot.lora}, triggers='${slot.triggers}'`);
                     if (widgetIndex !== -1) {
                         o.widgets_values[widgetIndex] = {
                             on: slot.enabled,
@@ -612,6 +615,7 @@ app.registerExtension({
                         };
                     }
                 }
+                console.log("onSerialize result widgets_values:", o.widgets_values);
             };
 
             /**
@@ -621,21 +625,13 @@ app.registerExtension({
             nodeType.prototype.serialize = function() {
                 const data = originalSerialize ? originalSerialize.apply(this, arguments) : {};
 
-                // Save slot states
-                if (!data.widgets_values) {
-                    data.widgets_values = [];
-                }
-
-                // Store slot data in a custom property
+                // Save slot states (don't save index or counter - they'll be regenerated)
                 data.lora_slots = this.loraSlots.map(slot => ({
-                    index: slot.index,
                     enabled: slot.enabled,
                     lora: slot.lora,
                     strength: slot.strength,
                     triggers: slot.triggers
                 }));
-
-                data.slot_counter = this.slotCounter;
 
                 return data;
             };
@@ -656,31 +652,37 @@ app.registerExtension({
                 }
 
                 // Restore slot data if available
-                if (data.lora_slots && Array.isArray(data.lora_slots)) {
-                    // Clear existing slots first
+                if (data.lora_slots && Array.isArray(data.lora_slots) && data.lora_slots.length > 0) {
+                    // Clear existing slots and reset counter
                     this.loraSlots = [];
-                    this.slotCounter = data.slot_counter || 0;
+                    this.slotCounter = 0;
 
-                    // Remove all existing widgets except the "Add" button
-                    const addButtonWidget = this.widgets.find(w => w.name === "➕ Add LoRa");
+                    // Keep reference to the add button (stored during onNodeCreated)
+                    const addButtonWidget = this.addLoraButton;
+
+                    // Remove all widgets except the add button
                     this.widgets = addButtonWidget ? [addButtonWidget] : [];
 
-                    // Recreate slots from saved data
-                    data.lora_slots.forEach(slotInfo => {
-                        this.slotCounter = slotInfo.index - 1;  // Set counter before adding
+                    // Recreate slots from saved data (indices will be assigned fresh)
+                    for (const slotInfo of data.lora_slots) {
                         const slot = this.addLoraSlot();
 
                         // Restore slot data
-                        slot.enabled = slotInfo.enabled;
-                        slot.lora = slotInfo.lora;
-                        slot.strength = slotInfo.strength;
-                        slot.triggers = slotInfo.triggers || "";
+                        slot.enabled = slotInfo.enabled !== false;  // Default to true
+                        slot.lora = slotInfo.lora || "";
+                        slot.strength = slotInfo.strength ?? 1.0;
+                        slot.triggers = "";  // Will be loaded from database
 
                         // Update widget value for display
                         if (slot.widget) {
                             slot.widget.value = slot.lora;
                         }
-                    });
+
+                        // Load triggers from database if lora is set
+                        if (slot.lora) {
+                            this.loadTriggersForSlot(slot);
+                        }
+                    }
 
                     // Move "Add" button to the end
                     if (addButtonWidget) {
