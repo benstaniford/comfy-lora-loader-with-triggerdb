@@ -140,8 +140,10 @@ function showLoraSearchPopup(event, loraList, onSelect) {
     // Initial render with all items
     renderResults('');
 
-    // Focus the input
-    input.focus();
+    // Focus the input (with delay to ensure DOM is ready and canvas releases focus)
+    setTimeout(() => {
+        input.focus();
+    }, 50);
 }
 
 // Extension for Stacking LoRa Loader with Trigger DB
@@ -315,6 +317,9 @@ app.registerExtension({
                         if (localX >= lora.x && localX <= lora.x + lora.width) {
                             const loraList = self.loraList || [];
                             if (loraList.length > 0) {
+                                // Stop event from propagating to canvas
+                                event.preventDefault();
+                                event.stopPropagation();
                                 showLoraSearchPopup(event, loraList, (selectedLora) => {
                                     slotData.lora = selectedLora;
                                     self.loadTriggersForSlot(slotData);
