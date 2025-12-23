@@ -201,61 +201,52 @@ app.registerExtension({
             };
 
             /**
-             * Get context menu options - both node-level and widget-level
+             * Get context menu options - show submenu for each LoRa slot
              */
             nodeType.prototype.getExtraMenuOptions = function(_, options) {
-                // Check if we're over a specific widget
-                const canvas = app.canvas;
-                const mousePos = canvas.graph_mouse;
-                let clickedSlot = null;
+                const self = this;
 
-                // Find which slot was clicked based on mouse position
-                if (mousePos && this.widgets) {
-                    for (const slot of this.loraSlots || []) {
-                        // Check if mouse is over any of this slot's widgets
-                        for (const widget of slot.widgets) {
-                            const widgetIndex = this.widgets.indexOf(widget);
-                            if (widgetIndex !== -1 && widget.last_y !== undefined) {
-                                const widgetY = this.pos[1] + widget.last_y;
-                                const widgetHeight = widget.computedHeight || 30;
-                                if (mousePos[1] >= widgetY && mousePos[1] <= widgetY + widgetHeight) {
-                                    clickedSlot = slot;
-                                    break;
-                                }
-                            }
-                        }
-                        if (clickedSlot) break;
-                    }
-                }
+                // Add submenu for each LoRa slot
+                if (this.loraSlots && this.loraSlots.length > 0) {
+                    for (let i = 0; i < this.loraSlots.length; i++) {
+                        const slot = this.loraSlots[i];
+                        const slotLabel = slot.lora ? slot.lora.split(/[/\\]/).pop() : `LoRa ${slot.index}`;
 
-                // If we clicked on a specific slot, add slot-specific options
-                if (clickedSlot) {
-                    const slotIndex = this.loraSlots.indexOf(clickedSlot);
+                        const submenuOptions = [];
 
-                    // Remove this LoRa
-                    options.push({
-                        content: "🗑️ Remove LoRa",
-                        callback: () => {
-                            this.removeLoraSlot(clickedSlot);
-                        }
-                    });
-
-                    // Move up (if not first)
-                    if (slotIndex > 0) {
-                        options.push({
-                            content: "⬆️ Move Up",
+                        // Remove option
+                        submenuOptions.push({
+                            content: "🗑️ Remove",
                             callback: () => {
-                                this.moveLoraSlot(clickedSlot, -1);
+                                self.removeLoraSlot(slot);
                             }
                         });
-                    }
 
-                    // Move down (if not last)
-                    if (slotIndex < this.loraSlots.length - 1) {
+                        // Move up (if not first)
+                        if (i > 0) {
+                            submenuOptions.push({
+                                content: "⬆️ Move Up",
+                                callback: () => {
+                                    self.moveLoraSlot(slot, -1);
+                                }
+                            });
+                        }
+
+                        // Move down (if not last)
+                        if (i < this.loraSlots.length - 1) {
+                            submenuOptions.push({
+                                content: "⬇️ Move Down",
+                                callback: () => {
+                                    self.moveLoraSlot(slot, 1);
+                                }
+                            });
+                        }
+
                         options.push({
-                            content: "⬇️ Move Down",
-                            callback: () => {
-                                this.moveLoraSlot(clickedSlot, 1);
+                            content: `LoRa ${slot.index}: ${slotLabel}`,
+                            has_submenu: true,
+                            submenu: {
+                                options: submenuOptions
                             }
                         });
                     }
@@ -268,6 +259,14 @@ app.registerExtension({
                     content: "🗑️ Clear Empty Slots",
                     callback: () => {
                         this.clearEmptySlots();
+                    }
+                });
+
+                // Add new LoRa option
+                options.push({
+                    content: "➕ Add LoRa Slot",
+                    callback: () => {
+                        this.addLoraSlot();
                     }
                 });
             };
