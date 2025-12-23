@@ -12,7 +12,7 @@ app.registerExtension({
             nodeType.prototype.onNodeCreated = async function() {
                 const r = onNodeCreated ? onNodeCreated.apply(this, arguments) : undefined;
 
-                // Initialize slot management
+                // Initialize slot management - always start fresh
                 this.loraSlots = [];
                 this.slotCounter = 0;
                 this.loraList = [];
@@ -25,10 +25,8 @@ app.registerExtension({
                     this.addLoraSlot();
                 }, { serialize: false });
 
-                // Add initial LoRa slots (start with 3)
-                for (let i = 0; i < 3; i++) {
-                    this.addLoraSlot();
-                }
+                // Add initial LoRa slots (start with 1 empty slot)
+                this.addLoraSlot();
 
                 // Force node to recalculate size
                 this.setSize(this.computeSize());
@@ -97,13 +95,14 @@ app.registerExtension({
                 // 3. Strength slider
                 const strengthWidget = this.addWidget(
                     "number",
-                    `strength_${slotIndex}`,
+                    `  strength`,  // Simple label, indent for visual grouping
                     slotData.strength,
                     (value) => {
                         slotData.strength = value;
                     },
                     { min: -20.0, max: 20.0, step: 0.01, precision: 2 }
                 );
+                // Note: widget name is just "  strength" for display, but we track it via slotData
                 slotData.strengthWidget = strengthWidget;
 
                 // Move strength before add button
