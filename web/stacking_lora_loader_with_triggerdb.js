@@ -537,11 +537,27 @@ app.registerExtension({
                 // Remove from slots array
                 this.loraSlots.splice(slotIndex, 1);
 
+                // Renumber remaining slots sequentially
+                this.renumberSlots();
+
                 // Force node to recalculate size
                 this.setSize(this.computeSize());
                 this.setDirtyCanvas(true, true);
+            };
 
-                console.log(`Removed LoRa slot ${slotData.index}`);
+            /**
+             * Renumber all slots sequentially (1, 2, 3, ...)
+             */
+            nodeType.prototype.renumberSlots = function() {
+                this.loraSlots.forEach((slot, idx) => {
+                    const newIndex = idx + 1;
+                    slot.index = newIndex;
+                    if (slot.widget) {
+                        slot.widget.name = `lora_${newIndex}`;
+                    }
+                });
+                // Reset counter to match the number of slots
+                this.slotCounter = this.loraSlots.length;
             };
 
             /**
@@ -570,11 +586,12 @@ app.registerExtension({
                 this.widgets[widget1Index] = widget2;
                 this.widgets[widget2Index] = widget1;
 
+                // Renumber slots to reflect new order
+                this.renumberSlots();
+
                 // Force node to recalculate size and redraw
                 this.setSize(this.computeSize());
                 this.setDirtyCanvas(true, true);
-
-                console.log(`Moved LoRa slot ${slotData.index} ${direction > 0 ? 'down' : 'up'}`);
             };
 
             /**
@@ -594,12 +611,26 @@ app.registerExtension({
                     }
                 }
 
-                // Remove the empty slots
+                // Remove the empty slots (without renumbering each time)
                 for (const slot of slotsToRemove) {
-                    this.removeLoraSlot(slot);
+                    const slotIndex = this.loraSlots.indexOf(slot);
+                    if (slotIndex === -1) continue;
+
+                    if (slot.widget) {
+                        const widgetIndex = this.widgets.indexOf(slot.widget);
+                        if (widgetIndex !== -1) {
+                            this.widgets.splice(widgetIndex, 1);
+                        }
+                    }
+                    this.loraSlots.splice(slotIndex, 1);
                 }
 
-                console.log(`Cleared ${slotsToRemove.length} empty slots`);
+                // Renumber once at the end
+                if (slotsToRemove.length > 0) {
+                    this.renumberSlots();
+                    this.setSize(this.computeSize());
+                    this.setDirtyCanvas(true, true);
+                }
             };
 
 
@@ -618,12 +649,9 @@ app.registerExtension({
                     o.widgets_values = [];
                 }
 
-                console.log("onSerialize called, loraSlots:", this.loraSlots);
-
                 // Replace each lora widget's value with a dict for execution
                 for (const slot of this.loraSlots || []) {
                     const widgetIndex = this.widgets.indexOf(slot.widget);
-                    console.log(`Slot ${slot.index}: widgetIndex=${widgetIndex}, lora=${slot.lora}, triggers='${slot.triggers}'`);
                     if (widgetIndex !== -1) {
                         o.widgets_values[widgetIndex] = {
                             on: slot.enabled,
@@ -633,7 +661,6 @@ app.registerExtension({
                         };
                     }
                 }
-                console.log("onSerialize result widgets_values:", o.widgets_values);
             };
 
             /**
