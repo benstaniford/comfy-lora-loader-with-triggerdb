@@ -398,15 +398,24 @@ async def save_lora_triggers(request):
         lora_base_name = instance.get_lora_base_name(lora_name)  # This normalizes the path
 
         if all_triggers.strip() or active_triggers.strip():
-            # Create database entry with file_id if available
-            entry = {
-                "all_triggers": all_triggers.strip(),
-                "active_triggers": active_triggers.strip()
-            }
-            if file_id:
-                entry["file_id"] = file_id
+            # Get existing entry or create a new dict if it doesn't exist
+            # This preserves any custom fields added by external tools
+            existing_entry = triggers_db.get(lora_base_name, {})
 
-            triggers_db[lora_base_name] = entry
+            # Handle old string format by converting to dict
+            if isinstance(existing_entry, str):
+                existing_entry = {
+                    "all_triggers": existing_entry,
+                    "active_triggers": ""
+                }
+
+            # Update only the fields we manage, preserving all other fields
+            existing_entry["all_triggers"] = all_triggers.strip()
+            existing_entry["active_triggers"] = active_triggers.strip()
+            if file_id:
+                existing_entry["file_id"] = file_id
+
+            triggers_db[lora_base_name] = existing_entry
 
             # Save to file
             try:
