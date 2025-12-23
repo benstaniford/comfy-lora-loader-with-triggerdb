@@ -21,7 +21,7 @@ app.registerExtension({
                 this.loraList = await this.getLoraList();
 
                 // Add "Add LoRa Slot" button first (it will stay at the bottom)
-                this.addLoraButton = this.addWidget("button", "➕ Add LoRa Slot", null, () => {
+                this.addLoraButton = this.addWidget("button", "➕ Add LoRa", null, () => {
                     this.addLoraSlot();
                 }, { serialize: false });
 
@@ -35,10 +35,11 @@ app.registerExtension({
             };
 
             /**
-             * Add a new LoRa slot with all its widgets
+             * Add a new LoRa slot with a single custom widget
              */
             nodeType.prototype.addLoraSlot = function() {
                 const slotIndex = ++this.slotCounter;
+                const self = this;
 
                 // Create slot data structure
                 const slotData = {
@@ -54,65 +55,175 @@ app.registerExtension({
                 // Get the position to insert (before the add button)
                 const addButtonIndex = this.widgets.indexOf(this.addLoraButton);
 
-                // 1. Toggle widget (checkbox-style)
-                const toggleWidget = this.addWidget(
-                    "toggle",
-                    `LoRa ${slotIndex}`,
-                    slotData.enabled,
-                    (value) => {
-                        slotData.enabled = value;
-                        this.updateSlotVisibility(slotData);
-                    },
-                    { serialize: false }
-                );
-                slotData.toggleWidget = toggleWidget;
+                // Create a single custom widget for the entire row
+                const loraRowWidget = {
+                    type: "lora_row",
+                    name: `lora_${slotIndex}`,
+                    value: slotData.lora,
+                    slotData: slotData,
+                    options: { serialize: false },
 
-                // Move toggle before add button
+                    // Draw the widget
+                    draw: function(ctx, node, widgetWidth, y, widgetHeight) {
+                        const margin = 10;
+                        const toggleSize = 20;
+                        const strengthWidth = 70;
+                        const padding = 5;
+
+                        // Background
+                        ctx.fillStyle = slotData.enabled ? "#353535" : "#252525";
+                        ctx.beginPath();
+                        ctx.roundRect(margin, y, widgetWidth - margin * 2, widgetHeight, 4);
+                        ctx.fill();
+
+                        // Toggle circle
+                        const toggleX = margin + padding + toggleSize / 2;
+                        const toggleY = y + widgetHeight / 2;
+                        ctx.beginPath();
+                        ctx.arc(toggleX, toggleY, toggleSize / 2 - 2, 0, Math.PI * 2);
+                        ctx.fillStyle = slotData.enabled ? "#6c6" : "#444";
+                        ctx.fill();
+                        ctx.strokeStyle = "#666";
+                        ctx.lineWidth = 1;
+                        ctx.stroke();
+
+                        // LoRa name
+                        const loraX = margin + padding + toggleSize + padding;
+                        const loraWidth = widgetWidth - margin * 2 - toggleSize - strengthWidth - padding * 4;
+                        ctx.fillStyle = slotData.enabled ? "#ddd" : "#888";
+                        ctx.font = "12px Arial";
+                        ctx.textAlign = "left";
+                        ctx.textBaseline = "middle";
+
+                        let displayName = slotData.lora || "(select lora)";
+                        // Truncate if too long
+                        if (displayName.length > 30) {
+                            displayName = "..." + displayName.slice(-27);
+                        }
+                        ctx.fillText(displayName, loraX, y + widgetHeight / 2);
+
+                        // Strength box
+                        const strengthX = widgetWidth - margin - strengthWidth - padding;
+                        ctx.fillStyle = "#252525";
+                        ctx.beginPath();
+                        ctx.roundRect(strengthX, y + 3, strengthWidth, widgetHeight - 6, 3);
+                        ctx.fill();
+
+                        // Strength value
+                        ctx.fillStyle = slotData.enabled ? "#fff" : "#888";
+                        ctx.textAlign = "center";
+                        ctx.fillText(slotData.strength.toFixed(2), strengthX + strengthWidth / 2, y + widgetHeight / 2);
+
+                        // Strength arrows
+                        ctx.fillStyle = "#888";
+                        ctx.font = "10px Arial";
+                        ctx.fillText("◀", strengthX + 8, y + widgetHeight / 2);
+                        ctx.fillText("▶", strengthX + strengthWidth - 8, y + widgetHeight / 2);
+
+                        // Store hit areas for mouse handling
+                        this.hitAreas = {
+                            toggle: { x: margin, y: y, width: toggleSize + padding * 2, height: widgetHeight },
+                            lora: { x: loraX, y: y, width: loraWidth, height: widgetHeight },
+                            strengthDec: { x: strengthX, y: y, width: 20, height: widgetHeight },
+                            strengthVal: { x: strengthX + 20, y: y, width: strengthWidth - 40, height: widgetHeight },
+                            strengthInc: { x: strengthX + strengthWidth - 20, y: y, width: 20, height: widgetHeight }
+                        };
+                    },
+
+                    // Handle mouse events
+                    mouse: function(event, pos, node) {
+                        if (event.type !== "pointerdown") return false;
+
+                        const localX = pos[0];
+                        const localY = pos[1];
+
+                        if (!this.hitAreas) return false;
+
+                        // Check toggle click
+                        const toggle = this.hitAreas.toggle;
+                        if (localX >= toggle.x && localX <= toggle.x + toggle.width) {
+                            slotData.enabled = !slotData.enabled;
+                            node.setDirtyCanvas(true);
+                            return true;
+                        }
+
+                        // Check lora click - show dropdown
+                        const lora = this.hitAreas.lora;
+                        if (localX >= lora.x && localX <= lora.x + lora.width) {
+                            // Show lora selection menu
+                            const loraList = self.loraList || [];
+                            if (loraList.length > 0) {
+                                const menu = new LiteGraph.ContextMenu(
+                                    loraList.map(l => ({ content: l, value: l })),
+                                    {
+                                        event: event,
+                                        callback: (item) => {
+                                            if (item) {
+                                                slotData.lora = item.value;
+                                                this.value = item.value;
+                                                self.loadTriggersForSlot(slotData);
+                                                node.setDirtyCanvas(true);
+                                            }
+                                        },
+                                        parentMenu: null,
+                                        scale: 1
+                                    }
+                                );
+                            }
+                            return true;
+                        }
+
+                        // Check strength decrease
+                        const sDec = this.hitAreas.strengthDec;
+                        if (localX >= sDec.x && localX <= sDec.x + sDec.width) {
+                            slotData.strength = Math.max(-20, slotData.strength - 0.05);
+                            node.setDirtyCanvas(true);
+                            return true;
+                        }
+
+                        // Check strength increase
+                        const sInc = this.hitAreas.strengthInc;
+                        if (localX >= sInc.x && localX <= sInc.x + sInc.width) {
+                            slotData.strength = Math.min(20, slotData.strength + 0.05);
+                            node.setDirtyCanvas(true);
+                            return true;
+                        }
+
+                        // Check strength value click - allow direct input
+                        const sVal = this.hitAreas.strengthVal;
+                        if (localX >= sVal.x && localX <= sVal.x + sVal.width) {
+                            const newValue = prompt("Enter strength value:", slotData.strength.toFixed(2));
+                            if (newValue !== null) {
+                                const parsed = parseFloat(newValue);
+                                if (!isNaN(parsed)) {
+                                    slotData.strength = Math.max(-20, Math.min(20, parsed));
+                                    node.setDirtyCanvas(true);
+                                }
+                            }
+                            return true;
+                        }
+
+                        return false;
+                    },
+
+                    // Compute height
+                    computeSize: function(width) {
+                        return [width, 26];
+                    }
+                };
+
+                // Add widget to node
+                this.widgets.push(loraRowWidget);
+
+                // Move before add button
                 if (addButtonIndex !== -1) {
-                    this.widgets.splice(this.widgets.indexOf(toggleWidget), 1);
-                    this.widgets.splice(addButtonIndex, 0, toggleWidget);
+                    this.widgets.splice(this.widgets.indexOf(loraRowWidget), 1);
+                    this.widgets.splice(addButtonIndex, 0, loraRowWidget);
                 }
 
-                // 2. LoRa selector dropdown
-                const loraWidget = this.addWidget(
-                    "combo",
-                    `lora_${slotIndex}`,
-                    slotData.lora,
-                    (value) => {
-                        slotData.lora = value;
-                        this.loadTriggersForSlot(slotData);
-                    },
-                    { values: this.loraList || [] }
-                );
-                slotData.loraWidget = loraWidget;
-
-                // Move lora before add button
-                if (addButtonIndex !== -1) {
-                    this.widgets.splice(this.widgets.indexOf(loraWidget), 1);
-                    this.widgets.splice(this.widgets.indexOf(this.addLoraButton), 0, loraWidget);
-                }
-
-                // 3. Strength slider
-                const strengthWidget = this.addWidget(
-                    "number",
-                    `  strength`,  // Simple label, indent for visual grouping
-                    slotData.strength,
-                    (value) => {
-                        slotData.strength = value;
-                    },
-                    { min: -20.0, max: 20.0, step: 0.01, precision: 2 }
-                );
-                // Note: widget name is just "  strength" for display, but we track it via slotData
-                slotData.strengthWidget = strengthWidget;
-
-                // Move strength before add button
-                if (addButtonIndex !== -1) {
-                    this.widgets.splice(this.widgets.indexOf(strengthWidget), 1);
-                    this.widgets.splice(this.widgets.indexOf(this.addLoraButton), 0, strengthWidget);
-                }
-
-                // Store widget references (no triggers widget visible)
-                slotData.widgets = [toggleWidget, loraWidget, strengthWidget];
+                // Store widget reference
+                slotData.widget = loraRowWidget;
+                slotData.widgets = [loraRowWidget];
 
                 // Force node to recalculate size
                 this.setSize(this.computeSize());
@@ -184,21 +295,6 @@ app.registerExtension({
                 }
             };
 
-            /**
-             * Update visual state of slot widgets based on enabled state
-             */
-            nodeType.prototype.updateSlotVisibility = function(slotData) {
-                const isEnabled = slotData.enabled;
-
-                // Update opacity of widgets when disabled
-                if (slotData.widgets) {
-                    slotData.widgets.forEach((widget, idx) => {
-                        if (idx > 0 && widget.inputEl) {  // Skip toggle widget itself
-                            widget.inputEl.style.opacity = isEnabled ? "1.0" : "0.5";
-                        }
-                    });
-                }
-            };
 
             /**
              * Get context menu options - show submenu for each LoRa slot
@@ -279,14 +375,12 @@ app.registerExtension({
                 const slotIndex = this.loraSlots.indexOf(slotData);
                 if (slotIndex === -1) return;
 
-                // Remove the slot's widgets from the node
-                if (slotData.widgets) {
-                    slotData.widgets.forEach(widget => {
-                        const widgetIndex = this.widgets.indexOf(widget);
-                        if (widgetIndex !== -1) {
-                            this.widgets.splice(widgetIndex, 1);
-                        }
-                    });
+                // Remove the slot's widget from the node
+                if (slotData.widget) {
+                    const widgetIndex = this.widgets.indexOf(slotData.widget);
+                    if (widgetIndex !== -1) {
+                        this.widgets.splice(widgetIndex, 1);
+                    }
                 }
 
                 // Remove from slots array
@@ -294,6 +388,7 @@ app.registerExtension({
 
                 // Force node to recalculate size
                 this.setSize(this.computeSize());
+                this.setDirtyCanvas(true, true);
 
                 console.log(`Removed LoRa slot ${slotData.index}`);
             };
@@ -313,30 +408,16 @@ app.registerExtension({
                 this.loraSlots[slotIndex] = this.loraSlots[newIndex];
                 this.loraSlots[newIndex] = temp;
 
-                // Move widgets in the widgets array
-                // Each slot has 3 widgets (toggle, lora, strength)
-                const slot1Widgets = this.loraSlots[slotIndex].widgets;
-                const slot2Widgets = this.loraSlots[newIndex].widgets;
+                // Move widgets in the widgets array (each slot has 1 widget now)
+                const widget1 = this.loraSlots[slotIndex].widget;
+                const widget2 = this.loraSlots[newIndex].widget;
 
-                // Find their positions in the widgets array
-                const widget1StartIndex = this.widgets.indexOf(slot1Widgets[0]);
-                const widget2StartIndex = this.widgets.indexOf(slot2Widgets[0]);
+                const widget1Index = this.widgets.indexOf(widget1);
+                const widget2Index = this.widgets.indexOf(widget2);
 
-                // Remove both sets of widgets
-                const widgets1 = this.widgets.splice(widget1StartIndex, 3);
-                const widgets2 = this.widgets.splice(
-                    widget2StartIndex > widget1StartIndex ? widget2StartIndex - 3 : widget2StartIndex,
-                    3
-                );
-
-                // Re-insert them in swapped order
-                if (widget1StartIndex < widget2StartIndex) {
-                    this.widgets.splice(widget1StartIndex, 0, ...widgets2);
-                    this.widgets.splice(widget2StartIndex, 0, ...widgets1);
-                } else {
-                    this.widgets.splice(widget2StartIndex, 0, ...widgets1);
-                    this.widgets.splice(widget1StartIndex, 0, ...widgets2);
-                }
+                // Swap widgets in place
+                this.widgets[widget1Index] = widget2;
+                this.widgets[widget2Index] = widget1;
 
                 // Force node to recalculate size and redraw
                 this.setSize(this.computeSize());
@@ -356,35 +437,20 @@ app.registerExtension({
                     const slot = this.loraSlots[i];
                     if (!slot.lora || slot.lora.trim() === "") {
                         // Keep at least one slot
-                        if (this.loraSlots.length > 1) {
-                            slotsToRemove.push(i);
+                        if (this.loraSlots.length - slotsToRemove.length > 1) {
+                            slotsToRemove.push(slot);
                         }
                     }
                 }
 
-                // Remove the slots and their widgets
-                for (const slotIndex of slotsToRemove) {
-                    const slot = this.loraSlots[slotIndex];
-
-                    // Remove widgets from node
-                    if (slot.widgets) {
-                        slot.widgets.forEach(widget => {
-                            const widgetIndex = this.widgets.indexOf(widget);
-                            if (widgetIndex !== -1) {
-                                this.widgets.splice(widgetIndex, 1);
-                            }
-                        });
-                    }
-
-                    // Remove slot from array
-                    this.loraSlots.splice(slotIndex, 1);
+                // Remove the empty slots
+                for (const slot of slotsToRemove) {
+                    this.removeLoraSlot(slot);
                 }
-
-                // Force node to recalculate size
-                this.setSize(this.computeSize());
 
                 console.log(`Cleared ${slotsToRemove.length} empty slots`);
             };
+
 
             /**
              * Override onSerialize - called when building prompt for execution
@@ -403,7 +469,7 @@ app.registerExtension({
 
                 // Replace each lora widget's value with a dict for execution
                 for (const slot of this.loraSlots || []) {
-                    const widgetIndex = this.widgets.indexOf(slot.loraWidget);
+                    const widgetIndex = this.widgets.indexOf(slot.widget);
                     if (widgetIndex !== -1) {
                         o.widgets_values[widgetIndex] = {
                             on: slot.enabled,
@@ -463,7 +529,7 @@ app.registerExtension({
                     this.slotCounter = data.slot_counter || 0;
 
                     // Remove all existing widgets except the "Add" button
-                    const addButtonWidget = this.widgets.find(w => w.name === "➕ Add LoRa Slot");
+                    const addButtonWidget = this.widgets.find(w => w.name === "➕ Add LoRa");
                     this.widgets = addButtonWidget ? [addButtonWidget] : [];
 
                     // Recreate slots from saved data
@@ -477,13 +543,10 @@ app.registerExtension({
                         slot.strength = slotInfo.strength;
                         slot.triggers = slotInfo.triggers || "";
 
-                        // Update widget values
-                        if (slot.toggleWidget) slot.toggleWidget.value = slot.enabled;
-                        if (slot.loraWidget) slot.loraWidget.value = slot.lora;
-                        if (slot.strengthWidget) slot.strengthWidget.value = slot.strength;
-
-                        // Update visibility
-                        this.updateSlotVisibility(slot);
+                        // Update widget value for display
+                        if (slot.widget) {
+                            slot.widget.value = slot.lora;
+                        }
                     });
 
                     // Move "Add" button to the end
@@ -498,6 +561,7 @@ app.registerExtension({
 
                 // Force node to recalculate size
                 this.setSize(this.computeSize());
+                this.setDirtyCanvas(true, true);
             };
         }
     }
