@@ -1,4 +1,22 @@
-from .lora_loader_with_triggerdb import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
+from .lora_loader_with_triggerdb import (
+    NODE_CLASS_MAPPINGS as SINGLE_LOADER_MAPPINGS,
+    NODE_DISPLAY_NAME_MAPPINGS as SINGLE_LOADER_DISPLAY_MAPPINGS
+)
+from .stacking_lora_loader_with_triggerdb import (
+    NODE_CLASS_MAPPINGS as STACKING_LOADER_MAPPINGS,
+    NODE_DISPLAY_NAME_MAPPINGS as STACKING_LOADER_DISPLAY_MAPPINGS
+)
+
+# Merge node mappings from both loaders
+NODE_CLASS_MAPPINGS = {
+    **SINGLE_LOADER_MAPPINGS,
+    **STACKING_LOADER_MAPPINGS
+}
+
+NODE_DISPLAY_NAME_MAPPINGS = {
+    **SINGLE_LOADER_DISPLAY_MAPPINGS,
+    **STACKING_LOADER_DISPLAY_MAPPINGS
+}
 
 # Web directory for ComfyUI to serve JavaScript files
 WEB_DIRECTORY = "./web"
