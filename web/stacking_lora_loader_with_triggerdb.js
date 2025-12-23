@@ -9,22 +9,26 @@ app.registerExtension({
         if (nodeData.name === "StackingLoRaLoaderWithTriggerDB") {
             const onNodeCreated = nodeType.prototype.onNodeCreated;
 
-            nodeType.prototype.onNodeCreated = function() {
+            nodeType.prototype.onNodeCreated = async function() {
                 const r = onNodeCreated ? onNodeCreated.apply(this, arguments) : undefined;
 
                 // Initialize slot management
                 this.loraSlots = [];
                 this.slotCounter = 0;
+                this.loraList = [];
+
+                // Fetch lora list once
+                this.loraList = await this.getLoraList();
+
+                // Add "Add LoRa Slot" button first (it will stay at the bottom)
+                this.addLoraButton = this.addWidget("button", "➕ Add LoRa Slot", null, () => {
+                    this.addLoraSlot();
+                }, { serialize: false });
 
                 // Add initial LoRa slots (start with 3)
                 for (let i = 0; i < 3; i++) {
                     this.addLoraSlot();
                 }
-
-                // Add "Add LoRa Slot" button at the bottom
-                this.addWidget("button", "➕ Add LoRa Slot", null, () => {
-                    this.addLoraSlot();
-                }, { serialize: false });
 
                 // Force node to recalculate size
                 this.setSize(this.computeSize());
@@ -38,33 +42,38 @@ app.registerExtension({
             nodeType.prototype.addLoraSlot = function() {
                 const slotIndex = ++this.slotCounter;
 
-                // Get available LoRas
-                const loras = this.getLoraList();
-
                 // Create slot data structure
                 const slotData = {
                     index: slotIndex,
                     enabled: true,
                     lora: "",
                     strength: 1.0,
-                    triggers: ""
+                    triggers: ""  // Internal only, not displayed
                 };
 
                 this.loraSlots.push(slotData);
 
+                // Get the position to insert (before the add button)
+                const addButtonIndex = this.widgets.indexOf(this.addLoraButton);
+
                 // 1. Toggle widget (checkbox-style)
                 const toggleWidget = this.addWidget(
                     "toggle",
-                    `☑️ LoRa ${slotIndex}`,
+                    `LoRa ${slotIndex}`,
                     slotData.enabled,
                     (value) => {
                         slotData.enabled = value;
-                        // Update the visual state of related widgets
                         this.updateSlotVisibility(slotData);
                     },
-                    { serialize: false }  // Don't serialize, will be in slot data
+                    { serialize: false }
                 );
                 slotData.toggleWidget = toggleWidget;
+
+                // Move toggle before add button
+                if (addButtonIndex !== -1) {
+                    this.widgets.splice(this.widgets.indexOf(toggleWidget), 1);
+                    this.widgets.splice(addButtonIndex, 0, toggleWidget);
+                }
 
                 // 2. LoRa selector dropdown
                 const loraWidget = this.addWidget(
@@ -73,17 +82,22 @@ app.registerExtension({
                     slotData.lora,
                     (value) => {
                         slotData.lora = value;
-                        // Auto-load triggers when LoRa changes
                         this.loadTriggersForSlot(slotData);
                     },
-                    { values: loras }
+                    { values: this.loraList || [] }
                 );
                 slotData.loraWidget = loraWidget;
+
+                // Move lora before add button
+                if (addButtonIndex !== -1) {
+                    this.widgets.splice(this.widgets.indexOf(loraWidget), 1);
+                    this.widgets.splice(this.widgets.indexOf(this.addLoraButton), 0, loraWidget);
+                }
 
                 // 3. Strength slider
                 const strengthWidget = this.addWidget(
                     "number",
-                    `  Strength`,
+                    `strength_${slotIndex}`,
                     slotData.strength,
                     (value) => {
                         slotData.strength = value;
@@ -92,23 +106,14 @@ app.registerExtension({
                 );
                 slotData.strengthWidget = strengthWidget;
 
-                // 4. Triggers display (read-only text)
-                const triggersWidget = this.addWidget(
-                    "text",
-                    `  Triggers`,
-                    slotData.triggers || "(no triggers)",
-                    null,  // No callback for read-only
-                    { multiline: false }
-                );
-                // Make it read-only by disabling input if possible
-                if (triggersWidget.inputEl) {
-                    triggersWidget.inputEl.readOnly = true;
-                    triggersWidget.inputEl.style.opacity = "0.7";
+                // Move strength before add button
+                if (addButtonIndex !== -1) {
+                    this.widgets.splice(this.widgets.indexOf(strengthWidget), 1);
+                    this.widgets.splice(this.widgets.indexOf(this.addLoraButton), 0, strengthWidget);
                 }
-                slotData.triggersWidget = triggersWidget;
 
-                // Store widget references
-                slotData.widgets = [toggleWidget, loraWidget, strengthWidget, triggersWidget];
+                // Store widget references (no triggers widget visible)
+                slotData.widgets = [toggleWidget, loraWidget, strengthWidget];
 
                 // Force node to recalculate size
                 this.setSize(this.computeSize());
@@ -117,26 +122,33 @@ app.registerExtension({
             };
 
             /**
-             * Get the list of available LoRa files
+             * Get the list of available LoRa files from ComfyUI
              */
-            nodeType.prototype.getLoraList = function() {
-                // Try to get LoRa list from ComfyUI
+            nodeType.prototype.getLoraList = async function() {
                 try {
-                    // Check if there's a widget definition we can use
-                    const loraInput = nodeData?.input?.optional?.lora_1;
-                    if (loraInput && Array.isArray(loraInput[0])) {
-                        return loraInput[0];
+                    // Fetch lora list from ComfyUI's object_info API
+                    const response = await api.fetchApi("/object_info");
+                    if (response.ok) {
+                        const objectInfo = await response.json();
+                        // Look for any node that has lora inputs to get the list
+                        for (const nodeInfo of Object.values(objectInfo)) {
+                            if (nodeInfo.input && nodeInfo.input.required) {
+                                for (const [inputName, inputDef] of Object.entries(nodeInfo.input.required)) {
+                                    if (inputName.includes("lora") && Array.isArray(inputDef) && Array.isArray(inputDef[0])) {
+                                        return inputDef[0];
+                                    }
+                                }
+                            }
+                        }
                     }
                 } catch (e) {
-                    console.log("Could not get LoRa list from node data:", e);
+                    console.log("Could not fetch LoRa list:", e);
                 }
-
-                // Fallback to empty array (ComfyUI will populate it)
                 return [];
             };
 
             /**
-             * Load triggers from database for a specific slot
+             * Load triggers from database for a specific slot (internal only, not displayed)
              */
             nodeType.prototype.loadTriggersForSlot = async function(slotData) {
                 const loraName = slotData.lora;
@@ -144,15 +156,7 @@ app.registerExtension({
                 // Clear triggers if no LoRa selected
                 if (!loraName || loraName.trim() === "") {
                     slotData.triggers = "";
-                    if (slotData.triggersWidget) {
-                        slotData.triggersWidget.value = "(no LoRa selected)";
-                    }
                     return;
-                }
-
-                // Show loading state
-                if (slotData.triggersWidget) {
-                    slotData.triggersWidget.value = "Loading...";
                 }
 
                 try {
@@ -171,30 +175,13 @@ app.registerExtension({
                         // Use active_triggers (user's selection) or fall back to all_triggers
                         const triggers = data.active_triggers || data.all_triggers || "";
                         slotData.triggers = triggers;
-
-                        if (slotData.triggersWidget) {
-                            if (triggers) {
-                                slotData.triggersWidget.value = triggers;
-                                // Set title for tooltip with full text
-                                if (slotData.triggersWidget.inputEl) {
-                                    slotData.triggersWidget.inputEl.title = triggers;
-                                }
-                            } else {
-                                slotData.triggersWidget.value = "(no triggers saved)";
-                            }
-                        }
+                        console.log(`Loaded triggers for ${loraName}: ${triggers.substring(0, 50)}${triggers.length > 50 ? '...' : ''}`);
                     } else {
                         slotData.triggers = "";
-                        if (slotData.triggersWidget) {
-                            slotData.triggersWidget.value = "(error loading)";
-                        }
                     }
                 } catch (error) {
                     console.error(`Error loading triggers for slot ${slotData.index}:`, error);
                     slotData.triggers = "";
-                    if (slotData.triggersWidget) {
-                        slotData.triggersWidget.value = "(error loading)";
-                    }
                 }
             };
 
@@ -318,10 +305,15 @@ app.registerExtension({
              * Deserialize node state when loading workflow
              */
             const originalConfigure = nodeType.prototype.configure;
-            nodeType.prototype.configure = function(data) {
+            nodeType.prototype.configure = async function(data) {
                 // Restore basic configuration first
                 if (originalConfigure) {
                     originalConfigure.apply(this, arguments);
+                }
+
+                // Initialize if needed
+                if (!this.loraList) {
+                    this.loraList = await this.getLoraList();
                 }
 
                 // Restore slot data if available
@@ -343,15 +335,12 @@ app.registerExtension({
                         slot.enabled = slotInfo.enabled;
                         slot.lora = slotInfo.lora;
                         slot.strength = slotInfo.strength;
-                        slot.triggers = slotInfo.triggers;
+                        slot.triggers = slotInfo.triggers || "";
 
                         // Update widget values
                         if (slot.toggleWidget) slot.toggleWidget.value = slot.enabled;
                         if (slot.loraWidget) slot.loraWidget.value = slot.lora;
                         if (slot.strengthWidget) slot.strengthWidget.value = slot.strength;
-                        if (slot.triggersWidget) {
-                            slot.triggersWidget.value = slot.triggers || "(no triggers)";
-                        }
 
                         // Update visibility
                         this.updateSlotVisibility(slot);
