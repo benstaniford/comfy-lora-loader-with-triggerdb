@@ -202,9 +202,29 @@ app.registerExtension({
                 const loraRowWidget = {
                     type: "lora_row",
                     name: `lora_${slotIndex}`,
-                    value: slotData.lora,
                     slotData: slotData,
-                    options: { serialize: false },
+                    options: {},
+
+                    // Getter for value - returns dict format for Python
+                    get value() {
+                        return {
+                            on: slotData.enabled,
+                            lora: slotData.lora || "",
+                            strength: slotData.strength,
+                            triggers: slotData.triggers || ""
+                        };
+                    },
+                    // Setter for value - handles both string and dict formats
+                    set value(v) {
+                        if (typeof v === 'object' && v !== null) {
+                            slotData.enabled = v.on !== false;
+                            slotData.lora = v.lora || "";
+                            slotData.strength = v.strength ?? 1.0;
+                            slotData.triggers = v.triggers || "";
+                        } else if (typeof v === 'string') {
+                            slotData.lora = v;
+                        }
+                    },
 
                     // Draw the widget
                     draw: function(ctx, node, widgetWidth, y, widgetHeight) {
@@ -295,10 +315,8 @@ app.registerExtension({
                         if (localX >= lora.x && localX <= lora.x + lora.width) {
                             const loraList = self.loraList || [];
                             if (loraList.length > 0) {
-                                const widgetRef = this;
                                 showLoraSearchPopup(event, loraList, (selectedLora) => {
                                     slotData.lora = selectedLora;
-                                    widgetRef.value = selectedLora;
                                     self.loadTriggersForSlot(slotData);
                                     node.setDirtyCanvas(true);
                                 });
@@ -667,16 +685,11 @@ app.registerExtension({
                     for (const slotInfo of data.lora_slots) {
                         const slot = this.addLoraSlot();
 
-                        // Restore slot data
+                        // Restore slot data (widget getter reads from slotData directly)
                         slot.enabled = slotInfo.enabled !== false;  // Default to true
                         slot.lora = slotInfo.lora || "";
                         slot.strength = slotInfo.strength ?? 1.0;
                         slot.triggers = "";  // Will be loaded from database
-
-                        // Update widget value for display
-                        if (slot.widget) {
-                            slot.widget.value = slot.lora;
-                        }
 
                         // Load triggers from database if lora is set
                         if (slot.lora) {
