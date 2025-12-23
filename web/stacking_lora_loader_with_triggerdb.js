@@ -1,6 +1,149 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
+/**
+ * Create and show a searchable dropdown for LoRa selection
+ */
+function showLoraSearchPopup(event, loraList, onSelect) {
+    // Remove any existing popup
+    const existingPopup = document.querySelector('.lora-search-popup');
+    if (existingPopup) {
+        existingPopup.remove();
+    }
+
+    // Create popup container
+    const popup = document.createElement('div');
+    popup.className = 'lora-search-popup';
+    popup.style.cssText = `
+        position: fixed;
+        left: ${event.clientX}px;
+        top: ${event.clientY}px;
+        background: #353535;
+        border: 1px solid #555;
+        border-radius: 4px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        z-index: 10000;
+        max-height: 400px;
+        width: 300px;
+        display: flex;
+        flex-direction: column;
+    `;
+
+    // Create search input
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = 'Type to search...';
+    input.style.cssText = `
+        width: 100%;
+        padding: 8px;
+        border: none;
+        border-bottom: 1px solid #555;
+        background: #404040;
+        color: #fff;
+        font-size: 14px;
+        box-sizing: border-box;
+        outline: none;
+    `;
+
+    // Create results container
+    const resultsContainer = document.createElement('div');
+    resultsContainer.style.cssText = `
+        overflow-y: auto;
+        max-height: 350px;
+    `;
+
+    // Function to render results
+    function renderResults(filter) {
+        resultsContainer.innerHTML = '';
+        const filterLower = filter.toLowerCase();
+        const filtered = loraList.filter(l => l.toLowerCase().includes(filterLower));
+
+        if (filtered.length === 0) {
+            const noResults = document.createElement('div');
+            noResults.textContent = 'No matches found';
+            noResults.style.cssText = 'padding: 8px; color: #888; font-style: italic;';
+            resultsContainer.appendChild(noResults);
+            return;
+        }
+
+        filtered.slice(0, 50).forEach((lora, index) => {
+            const item = document.createElement('div');
+            item.textContent = lora;
+            item.style.cssText = `
+                padding: 6px 8px;
+                cursor: pointer;
+                color: #ddd;
+                font-size: 12px;
+                border-bottom: 1px solid #404040;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            `;
+            item.addEventListener('mouseenter', () => {
+                item.style.background = '#505050';
+            });
+            item.addEventListener('mouseleave', () => {
+                item.style.background = 'transparent';
+            });
+            item.addEventListener('click', () => {
+                onSelect(lora);
+                popup.remove();
+            });
+            resultsContainer.appendChild(item);
+        });
+
+        if (filtered.length > 50) {
+            const more = document.createElement('div');
+            more.textContent = `... and ${filtered.length - 50} more`;
+            more.style.cssText = 'padding: 8px; color: #888; font-style: italic; text-align: center;';
+            resultsContainer.appendChild(more);
+        }
+    }
+
+    // Input event handler
+    input.addEventListener('input', () => {
+        renderResults(input.value);
+    });
+
+    // Handle keyboard navigation
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            popup.remove();
+        } else if (e.key === 'Enter') {
+            const firstResult = resultsContainer.querySelector('div');
+            if (firstResult && firstResult.textContent !== 'No matches found') {
+                const filterLower = input.value.toLowerCase();
+                const filtered = loraList.filter(l => l.toLowerCase().includes(filterLower));
+                if (filtered.length > 0) {
+                    onSelect(filtered[0]);
+                    popup.remove();
+                }
+            }
+        }
+    });
+
+    // Close popup when clicking outside
+    const closeHandler = (e) => {
+        if (!popup.contains(e.target)) {
+            popup.remove();
+            document.removeEventListener('mousedown', closeHandler);
+        }
+    };
+    setTimeout(() => {
+        document.addEventListener('mousedown', closeHandler);
+    }, 100);
+
+    popup.appendChild(input);
+    popup.appendChild(resultsContainer);
+    document.body.appendChild(popup);
+
+    // Initial render with all items
+    renderResults('');
+
+    // Focus the input
+    input.focus();
+}
+
 // Extension for Stacking LoRa Loader with Trigger DB
 app.registerExtension({
     name: "StackingLoRaLoaderWithTriggerDB",
@@ -147,28 +290,18 @@ app.registerExtension({
                             return true;
                         }
 
-                        // Check lora click - show dropdown
+                        // Check lora click - show searchable dropdown
                         const lora = this.hitAreas.lora;
                         if (localX >= lora.x && localX <= lora.x + lora.width) {
-                            // Show lora selection menu
                             const loraList = self.loraList || [];
                             if (loraList.length > 0) {
-                                const menu = new LiteGraph.ContextMenu(
-                                    loraList.map(l => ({ content: l, value: l })),
-                                    {
-                                        event: event,
-                                        callback: (item) => {
-                                            if (item) {
-                                                slotData.lora = item.value;
-                                                this.value = item.value;
-                                                self.loadTriggersForSlot(slotData);
-                                                node.setDirtyCanvas(true);
-                                            }
-                                        },
-                                        parentMenu: null,
-                                        scale: 1
-                                    }
-                                );
+                                const widgetRef = this;
+                                showLoraSearchPopup(event, loraList, (selectedLora) => {
+                                    slotData.lora = selectedLora;
+                                    widgetRef.value = selectedLora;
+                                    self.loadTriggersForSlot(slotData);
+                                    node.setDirtyCanvas(true);
+                                });
                             }
                             return true;
                         }
