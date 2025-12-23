@@ -64,8 +64,6 @@ app.registerExtension({
                     (value) => {
                         slotData.enabled = value;
                         this.updateSlotVisibility(slotData);
-                        // Update the widget's value to be the full dict for execution
-                        this.updateLoraWidgetValue(slotData);
                     },
                     { serialize: false }
                 );
@@ -85,8 +83,6 @@ app.registerExtension({
                     (value) => {
                         slotData.lora = value;
                         this.loadTriggersForSlot(slotData);
-                        // Update the widget's value to be the full dict for execution
-                        this.updateLoraWidgetValue(slotData);
                     },
                     { values: this.loraList || [] }
                 );
@@ -105,8 +101,6 @@ app.registerExtension({
                     slotData.strength,
                     (value) => {
                         slotData.strength = value;
-                        // Update the widget's value to be the full dict for execution
-                        this.updateLoraWidgetValue(slotData);
                     },
                     { min: -20.0, max: 20.0, step: 0.01, precision: 2 }
                 );
@@ -121,28 +115,10 @@ app.registerExtension({
                 // Store widget references (no triggers widget visible)
                 slotData.widgets = [toggleWidget, loraWidget, strengthWidget];
 
-                // Set initial dict value
-                this.updateLoraWidgetValue(slotData);
-
                 // Force node to recalculate size
                 this.setSize(this.computeSize());
 
                 return slotData;
-            };
-
-            /**
-             * Update the LoRa widget's value to be the full dict for execution
-             */
-            nodeType.prototype.updateLoraWidgetValue = function(slotData) {
-                if (slotData.loraWidget) {
-                    // Store the dict as the widget's value (this is what gets sent to Python)
-                    slotData.loraWidget.value = {
-                        on: slotData.enabled,
-                        lora: slotData.lora || "",
-                        strength: slotData.strength,
-                        triggers: slotData.triggers || ""
-                    };
-                }
             };
 
             /**
@@ -180,7 +156,6 @@ app.registerExtension({
                 // Clear triggers if no LoRa selected
                 if (!loraName || loraName.trim() === "") {
                     slotData.triggers = "";
-                    this.updateLoraWidgetValue(slotData);
                     return;
                 }
 
@@ -208,9 +183,6 @@ app.registerExtension({
                     console.error(`Error loading triggers for slot ${slotData.index}:`, error);
                     slotData.triggers = "";
                 }
-
-                // Update the widget value with the loaded triggers
-                this.updateLoraWidgetValue(slotData);
             };
 
             /**
@@ -280,6 +252,35 @@ app.registerExtension({
                 this.setSize(this.computeSize());
 
                 console.log(`Cleared ${slotsToRemove.length} empty slots`);
+            };
+
+            /**
+             * Override onSerialize - called when building prompt for execution
+             * This is different from serialize() which is for saving workflows
+             */
+            const originalOnSerialize = nodeType.prototype.onSerialize;
+            nodeType.prototype.onSerialize = function(o) {
+                if (originalOnSerialize) {
+                    originalOnSerialize.call(this, o);
+                }
+
+                // Ensure widgets_values exists
+                if (!o.widgets_values) {
+                    o.widgets_values = [];
+                }
+
+                // Replace each lora widget's value with a dict for execution
+                for (const slot of this.loraSlots || []) {
+                    const widgetIndex = this.widgets.indexOf(slot.loraWidget);
+                    if (widgetIndex !== -1) {
+                        o.widgets_values[widgetIndex] = {
+                            on: slot.enabled,
+                            lora: slot.lora || "",
+                            strength: slot.strength,
+                            triggers: slot.triggers || ""
+                        };
+                    }
+                }
             };
 
             /**
