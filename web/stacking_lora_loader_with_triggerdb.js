@@ -201,15 +201,149 @@ app.registerExtension({
             };
 
             /**
-             * Get the current widget values and prepare them for backend processing
+             * Get context menu options - both node-level and widget-level
              */
             nodeType.prototype.getExtraMenuOptions = function(_, options) {
+                // Check if we're over a specific widget
+                const canvas = app.canvas;
+                const mousePos = canvas.graph_mouse;
+                let clickedSlot = null;
+
+                // Find which slot was clicked based on mouse position
+                if (mousePos && this.widgets) {
+                    for (const slot of this.loraSlots || []) {
+                        // Check if mouse is over any of this slot's widgets
+                        for (const widget of slot.widgets) {
+                            const widgetIndex = this.widgets.indexOf(widget);
+                            if (widgetIndex !== -1 && widget.last_y !== undefined) {
+                                const widgetY = this.pos[1] + widget.last_y;
+                                const widgetHeight = widget.computedHeight || 30;
+                                if (mousePos[1] >= widgetY && mousePos[1] <= widgetY + widgetHeight) {
+                                    clickedSlot = slot;
+                                    break;
+                                }
+                            }
+                        }
+                        if (clickedSlot) break;
+                    }
+                }
+
+                // If we clicked on a specific slot, add slot-specific options
+                if (clickedSlot) {
+                    const slotIndex = this.loraSlots.indexOf(clickedSlot);
+
+                    // Remove this LoRa
+                    options.push({
+                        content: "🗑️ Remove LoRa",
+                        callback: () => {
+                            this.removeLoraSlot(clickedSlot);
+                        }
+                    });
+
+                    // Move up (if not first)
+                    if (slotIndex > 0) {
+                        options.push({
+                            content: "⬆️ Move Up",
+                            callback: () => {
+                                this.moveLoraSlot(clickedSlot, -1);
+                            }
+                        });
+                    }
+
+                    // Move down (if not last)
+                    if (slotIndex < this.loraSlots.length - 1) {
+                        options.push({
+                            content: "⬇️ Move Down",
+                            callback: () => {
+                                this.moveLoraSlot(clickedSlot, 1);
+                            }
+                        });
+                    }
+
+                    options.push(null); // Separator
+                }
+
+                // Always show clear empty slots option
                 options.push({
                     content: "🗑️ Clear Empty Slots",
                     callback: () => {
                         this.clearEmptySlots();
                     }
                 });
+            };
+
+            /**
+             * Remove a specific LoRa slot
+             */
+            nodeType.prototype.removeLoraSlot = function(slotData) {
+                // Find the slot in the array
+                const slotIndex = this.loraSlots.indexOf(slotData);
+                if (slotIndex === -1) return;
+
+                // Remove the slot's widgets from the node
+                if (slotData.widgets) {
+                    slotData.widgets.forEach(widget => {
+                        const widgetIndex = this.widgets.indexOf(widget);
+                        if (widgetIndex !== -1) {
+                            this.widgets.splice(widgetIndex, 1);
+                        }
+                    });
+                }
+
+                // Remove from slots array
+                this.loraSlots.splice(slotIndex, 1);
+
+                // Force node to recalculate size
+                this.setSize(this.computeSize());
+
+                console.log(`Removed LoRa slot ${slotData.index}`);
+            };
+
+            /**
+             * Move a LoRa slot up or down
+             */
+            nodeType.prototype.moveLoraSlot = function(slotData, direction) {
+                const slotIndex = this.loraSlots.indexOf(slotData);
+                if (slotIndex === -1) return;
+
+                const newIndex = slotIndex + direction;
+                if (newIndex < 0 || newIndex >= this.loraSlots.length) return;
+
+                // Swap in the slots array
+                const temp = this.loraSlots[slotIndex];
+                this.loraSlots[slotIndex] = this.loraSlots[newIndex];
+                this.loraSlots[newIndex] = temp;
+
+                // Move widgets in the widgets array
+                // Each slot has 3 widgets (toggle, lora, strength)
+                const slot1Widgets = this.loraSlots[slotIndex].widgets;
+                const slot2Widgets = this.loraSlots[newIndex].widgets;
+
+                // Find their positions in the widgets array
+                const widget1StartIndex = this.widgets.indexOf(slot1Widgets[0]);
+                const widget2StartIndex = this.widgets.indexOf(slot2Widgets[0]);
+
+                // Remove both sets of widgets
+                const widgets1 = this.widgets.splice(widget1StartIndex, 3);
+                const widgets2 = this.widgets.splice(
+                    widget2StartIndex > widget1StartIndex ? widget2StartIndex - 3 : widget2StartIndex,
+                    3
+                );
+
+                // Re-insert them in swapped order
+                if (widget1StartIndex < widget2StartIndex) {
+                    this.widgets.splice(widget1StartIndex, 0, ...widgets2);
+                    this.widgets.splice(widget2StartIndex, 0, ...widgets1);
+                } else {
+                    this.widgets.splice(widget2StartIndex, 0, ...widgets1);
+                    this.widgets.splice(widget1StartIndex, 0, ...widgets2);
+                }
+
+                // Force node to recalculate size and redraw
+                this.setSize(this.computeSize());
+                this.setDirtyCanvas(true, true);
+
+                console.log(`Moved LoRa slot ${slotData.index} ${direction > 0 ? 'down' : 'up'}`);
             };
 
             /**
